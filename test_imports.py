@@ -37,10 +37,12 @@ def check_config():
 
 
 def check_core_imports():
+    import agent_team.context  # noqa: F401
     import models.embedding  # noqa: F401
     import models.llm  # noqa: F401
     warnings.filterwarnings("ignore")
     import agent_team.memory  # noqa: F401
+    import agent_team.skills  # noqa: F401
     import agent_team.supervisor  # noqa: F401
     import tools.mcp_base  # noqa: F401
     py_compile.compile(str(Path(__file__).parent / "app.py"), doraise=True)
@@ -88,6 +90,29 @@ def check_memory_fallback():
     return f"backend={stats['backend']}"
 
 
+def check_context_and_skills():
+    from agent_team.context import ContextManager, ContextPacket
+    from agent_team.skills import get_skill_registry
+
+    manager = ContextManager(memory_budget=20, evidence_budget=30)
+    prompt = manager.build_worker_prompt(
+        ContextPacket(
+            task="生成一张架构图片",
+            memory_context="很长的历史记忆" * 20,
+            tool_observations=[{"tool": "image.generate_image", "content": "图片已生成"}],
+        ),
+        style="简洁输出",
+    )
+    assert "用户任务" in prompt
+    assert "图片已生成" in prompt
+
+    registry = get_skill_registry()
+    assert registry.match("生成一张 AgentFlow 图片").name == "image_generation"
+    assert registry.match("检索 RAG 知识库").route == "researcher"
+    assert registry.match("设计 MCP server 测试方案").route == "engineer"
+    return f"skills={len(registry.list_skills())}"
+
+
 def live_checks():
     from models.embedding import get_embedding_model
     from models.llm import get_llm
@@ -111,6 +136,7 @@ def main():
     step("MCP 工具注册", check_registry)
     step("Supervisor 关键词路由", check_keyword_router)
     step("内存降级记忆", check_memory_fallback)
+    step("上下文与 Skills", check_context_and_skills)
 
     if "--live" in sys.argv:
         step("外部服务连通", live_checks)

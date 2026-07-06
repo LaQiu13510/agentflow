@@ -8,11 +8,12 @@ class GeneralWorker(BaseWorker):
     role_prompt = "你是协调型 Agent，负责综合回答用户问题。"
 
     def run(self, task: str, memory_context: str = "") -> WorkerResult:
+        self._reset_tool_budget()
         observations = []
         used_tools = []
 
         if self._is_image_task(task):
-            result = self.tools.call("image", "generate_image", prompt=task, size="1024x1024")
+            result = self._call_tool("image", "generate_image", prompt=task, size="1024x1024")
             observations.append({"tool": "image.generate_image", "content": result.content, "metadata": result.metadata})
             used_tools.append("image.generate_image")
             evidence = result.content
@@ -24,7 +25,7 @@ class GeneralWorker(BaseWorker):
             )
             return WorkerResult(answer, observations, used_tools)
 
-        req = self.tools.call("project", "engineering_requirements")
+        req = self._call_tool("project", "engineering_requirements")
         observations.append({"tool": "project.engineering_requirements", "content": req.content})
         used_tools.append("project.engineering_requirements")
 
@@ -40,7 +41,7 @@ class GeneralWorker(BaseWorker):
         text = task.lower()
         return any(
             keyword in text
-            for keyword in ["生图", "图片", "图像", "image", "generate image", "gpt-image"]
+            for keyword in ["生图", "图片", "图像", "架构图", "流程图", "示意图", "image", "generate image", "gpt-image"]
         )
 
 

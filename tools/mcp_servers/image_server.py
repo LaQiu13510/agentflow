@@ -14,6 +14,7 @@ from config import (
     IMAGE_API_KEY,
     IMAGE_MODEL,
     IMAGE_OUTPUT_DIR,
+    IMAGE_RETRY_COUNT,
     IMAGE_TIMEOUT_SECONDS,
 )
 from tools.mcp_base import LocalMCPServer, ToolResult, ToolSpec
@@ -55,13 +56,19 @@ class ImageMCPServer(LocalMCPServer):
             "image": [],
             "size": size,
         }
-        try:
-            data = self._post_generation(payload)
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")[:500]
-            return ToolResult(False, f"图片 API 请求失败: HTTP {exc.code} {body}")
-        except Exception as exc:
-            return ToolResult(False, f"图片 API 请求失败: {exc}")
+        data = None
+        last_error = ""
+        for attempt in range(IMAGE_RETRY_COUNT + 1):
+            try:
+                data = self._post_generation(payload)
+                break
+            except urllib.error.HTTPError as exc:
+                body = exc.read().decode("utf-8", errors="replace")[:500]
+                last_error = f"HTTP {exc.code} {body}"
+            except Exception as exc:
+                last_error = str(exc)
+            if attempt >= IMAGE_RETRY_COUNT:
+                return ToolResult(False, f"图片 API 请求失败: {last_error}")
 
         item = (data.get("data") or [{}])[0]
         b64_json = item.get("b64_json")

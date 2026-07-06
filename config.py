@@ -47,12 +47,15 @@ AGENTFLOW_MEMORY_TABLE = os.getenv(
 )
 DEFAULT_SESSION_ID = "agentflow-demo"
 TOP_K_KNOWLEDGE = int(os.getenv("AGENTFLOW_TOP_K", "4"))
+MAX_TOOL_CALLS_PER_WORKER = int(os.getenv("MAX_TOOL_CALLS_PER_WORKER", "4"))
+TRACE_LOG_PATH = DATA_DIR / os.getenv("AGENTFLOW_TRACE_FILE", "agentflow_traces.jsonl")
 
 # Image generation
 IMAGE_API_KEY = os.getenv("IMAGE_API_KEY", "")
 IMAGE_API_BASE = os.getenv("IMAGE_API_BASE", "https://www.right.codes/draw/v1")
 IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-2")
 IMAGE_TIMEOUT_SECONDS = float(os.getenv("IMAGE_TIMEOUT_SECONDS", "120"))
+IMAGE_RETRY_COUNT = int(os.getenv("IMAGE_RETRY_COUNT", "1"))
 IMAGE_OUTPUT_DIR = DATA_DIR / "generated_images"
 IMAGE_OUTPUT_DIR.mkdir(exist_ok=True)
 

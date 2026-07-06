@@ -8,14 +8,15 @@ class WriterWorker(BaseWorker):
     role_prompt = "你是文档 Agent，负责把技术内容整理成项目说明、技术报告和发布说明。"
 
     def run(self, task: str, memory_context: str = "") -> WorkerResult:
+        self._reset_tool_budget()
         observations = []
         used_tools = []
 
-        summary = self.tools.call("project", "project_summary", project=task)
+        summary = self._call_tool("project", "project_summary", project=task)
         observations.append({"tool": "project.project_summary", "content": summary.content})
         used_tools.append("project.project_summary")
 
-        checklist = self.tools.call(
+        checklist = self._call_tool(
             "project",
             "quality_checklist",
             stack="Python, LangChain, LangGraph, MCP, Agent, RAG, PostgreSQL, Milvus",

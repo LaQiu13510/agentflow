@@ -10,6 +10,8 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
 from agent_team.memory import get_memory
+from agent_team.skills import Skill, get_skill_registry
+from agent_team.tracing import get_trace_store
 from agent_team.workers.engineer import EngineerWorker
 from agent_team.workers.general import GeneralWorker
 from agent_team.workers.researcher import ResearcherWorker
@@ -32,6 +34,8 @@ class AgentFlowState(TypedDict, total=False):
     observations: list[dict]
     used_tools: list[str]
     latency_ms: float
+    skill_name: str
+    trace_record: dict
     _start_time: float
 
 
@@ -45,9 +49,9 @@ class SupervisorAgent:
         self.llm = get_llm(temperature=0.0, max_tokens=512)
 
     def route(self, task: str) -> tuple[str, str]:
-        keyword_route = self._keyword_route(task)
-        if keyword_route:
-            return keyword_route, "keyword"
+        skill = self._match_skill(task)
+        if skill:
+            return skill.route, f"skill:{skill.name}"
 
         prompt = f"""你是 Supervisor Agent，请把用户任务路由到一个 worker。
 
@@ -79,16 +83,11 @@ class SupervisorAgent:
             return "general", f"fallback: {exc}"
 
     def _keyword_route(self, task: str) -> str | None:
-        text = task.lower()
-        if any(word in text for word in ["生图", "图片", "图像", "image", "generate image", "gpt-image"]):
-            return "general"
-        if any(word in text for word in ["检索", "知识库", "资料", "rag", "milvus", "postgresql"]):
-            return "researcher"
-        if any(word in text for word in ["架构", "实现", "代码", "接口", "测试", "bug", "部署", "mcp server"]):
-            return "engineer"
-        if any(word in text for word in ["文档", "报告", "摘要", "润色", "说明", "readme", "release", "pitch"]):
-            return "writer"
-        return None
+        skill = get_skill_registry().match(task)
+        return skill.route if skill else None
+
+    def _match_skill(self, task: str) -> Skill | None:
+        return get_skill_registry().match(task)
 
     def _parse_json(self, text: str) -> dict:
         match = re.search(r"\{.*\}", text, re.S)
@@ -130,6 +129,8 @@ def build_agent_team(
         route, reason = supervisor.route(state.get("task", ""))
         state["route"] = route
         state["route_reason"] = reason
+        if reason.startswith("skill:"):
+            state["skill_name"] = reason.split(":", 1)[1]
         return state
 
     def worker_node(worker_name: str):
@@ -167,6 +168,7 @@ def build_agent_team(
             memory.add_message(session_id, "user", task, route=route)
         if answer:
             memory.add_message(session_id, "assistant", answer, route=route)
+        state["trace_record"] = get_trace_store().append(state)
         return state
 
     def route_condition(state: AgentFlowState) -> Literal["researcher", "engineer", "writer", "general"]:

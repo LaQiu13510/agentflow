@@ -1,35 +1,42 @@
-﻿# AgentFlow
+# AgentFlow
 
-AgentFlow is a local multi-agent coordination platform for LLM applications. It uses LangGraph to route user tasks through a Supervisor node, delegates work to specialized workers, and exposes PostgreSQL, Milvus, and SmartKB retrieval through MCP-style tools.
+AgentFlow is a local multi-agent orchestration platform for LLM applications. It uses LangGraph to route tasks through a Supervisor, delegates work to specialized workers, and exposes PostgreSQL, Milvus, project utilities, and image generation through MCP-style tools.
 
 ## Features
 
-- LangGraph Supervisor workflow with explicit state transitions.
-- Four worker roles: researcher, engineer, writer, and general coordinator.
-- MCP-style local tool protocol with `list_tools` and `call_tool` interfaces.
-- PostgreSQL-backed short-term memory with in-memory fallback for demos and tests.
-- Milvus retrieval over the SmartKB collection from `smartkb-rag`.
-- Image generation through an OpenAI-compatible image API (`gpt-image-2` by default).
-- Streamlit UI showing route decisions, tool calls, observations, latency, and memory status.
-- Offline deterministic tests plus live health checks for external services.
+- Route tasks with a LangGraph Supervisor workflow.
+- Use four worker roles:
+  - `researcher`: retrieves knowledge, summarizes evidence, and cites sources.
+  - `engineer`: plans architecture, interfaces, implementation steps, tests, and risks.
+  - `writer`: produces documentation, reports, summaries, and release-style text.
+  - `general`: handles lightweight coordination and image generation tasks.
+- Register reusable skills with triggers, input schemas, output formats, fallback routes, and suggested tools.
+- Manage worker context with memory trimming and tool-observation formatting.
+- Expose local MCP-style tools with `list_tools` and `call_tool`.
+- Store short-term memory in PostgreSQL, with an in-memory fallback for offline demos and tests.
+- Query the SmartKB Milvus collection from the companion RAG project.
+- Generate images through a Right Code-compatible `gpt-image-2` image API.
+- Persist execution traces with routes, skills, tool calls, observations, final answers, latency, and estimated usage.
+- Redact common secrets from prompts and traces, and limit per-worker tool calls.
 
 ## Architecture
 
 ```text
 User task
-  -> load_memory
-  -> supervisor route
+  -> memory loader
+  -> Supervisor + SkillRegistry
   -> researcher | engineer | writer | general
+  -> ContextManager
   -> MCP-style tools
        -> PostgreSQL metadata and memory
        -> Milvus SmartKB retrieval
-       -> Project engineering helper tools
-       -> Image generation tools
-  -> finalize answer and trace
-  -> save_memory
+       -> project helper tools
+       -> image generation
+  -> final answer
+  -> memory + trace storage
 ```
 
-## Directory Structure
+## Project Structure
 
 ```text
 agentflow-multi-agent/
@@ -38,55 +45,94 @@ agentflow-multi-agent/
 ├── test_imports.py
 ├── test_e2e.py
 ├── agent_team/
-│   ├── supervisor.py
+│   ├── context.py
 │   ├── memory.py
+│   ├── safety.py
+│   ├── skills.py
+│   ├── supervisor.py
+│   ├── tracing.py
 │   └── workers/
+├── docs/
+├── eval/
 ├── models/
-├── tools/
-│   ├── mcp_base.py
-│   └── mcp_servers/
-└── docs/
+└── tools/
 ```
 
-## Quick Start
+## Installation
 
-```powershell
+```bash
+git clone <your-repository-url>
 cd agentflow-multi-agent
-E:\Anaconda_envs\envs\langchain\python.exe test_imports.py
-E:\Anaconda_envs\envs\langchain\python.exe test_e2e.py
-streamlit run app.py --server.port 8502
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
-Open http://localhost:8502.
+## Configuration
 
-## Image Generation
+Copy the example environment file and fill in your own credentials.
 
-Set these values in `.env` to enable image generation:
+```bash
+cp .env.example .env
+```
 
-```powershell
+Common configuration values:
+
+```env
+SMARTKB_PROJECT_DIR=../smartkb-rag
+DEEPSEEK_API_KEY=your_deepseek_key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-flash
+DB_URL=your_postgresql_connection_string
+MILVUS_HOST=127.0.0.1
+MILVUS_PORT=19530
+COLLECTION_NAME=my_rag_collection
 IMAGE_API_KEY=your_image_api_key
 IMAGE_API_BASE=https://www.right.codes/draw/v1
 IMAGE_MODEL=gpt-image-2
 ```
 
-Then ask AgentFlow to generate an image, for example: `生成一张 RAG 系统架构图风格的图片`.
+Do not commit real credentials.
 
-## Live Checks
+## Usage
 
-The default tests avoid external network calls. To verify DeepSeek, embedding, PostgreSQL, and Milvus connections:
+Run the Streamlit app:
 
-```powershell
-E:\Anaconda_envs\envs\langchain\python.exe test_imports.py --live
-E:\Anaconda_envs\envs\langchain\python.exe test_e2e.py --live
+```bash
+streamlit run app.py --server.port 8502
 ```
 
-## Configuration
+Open the local URL shown by Streamlit and enter a task. The UI shows route decisions, skill selection, tool calls, observations, latency, memory status, and recent traces.
 
-AgentFlow first reads `SMARTKB_PROJECT_DIR/.env`, then allows `agentflow-multi-agent/.env` to override values. Use `.env.example` as a template. Do not commit real API keys or database credentials.
+Example tasks:
+
+```text
+检索 SmartKB 中关于混合检索和 RRF 的内容
+设计一个 MCP server 的测试方案
+写一段 AgentFlow README 摘要
+生成一个多 Agent 协作架构图
+```
+
+## Tests
+
+The default tests are offline and do not require external services.
+
+```bash
+python test_imports.py
+python test_e2e.py
+python eval/agent_eval.py
+```
+
+Live service checks can be run after `.env` is configured:
+
+```bash
+python test_imports.py --live
+python test_e2e.py --live
+```
 
 ## Documentation
 
-- `docs/PROJECT_REPORT.md`: complete project report.
-- `docs/ARCHITECTURE.md`: system design and module responsibilities.
-- `docs/MCP_TOOLS.md`: local MCP-style tool protocol and tool catalog.
-- `docs/EVALUATION.md`: test strategy and validation results.
+- `docs/ARCHITECTURE.md`
+- `docs/EVALUATION.md`
+- `docs/MCP_TOOLS.md`
+- `docs/PROJECT_REPORT.md`

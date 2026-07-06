@@ -9,7 +9,9 @@ import streamlit as st
 from langchain_core.messages import HumanMessage
 
 from agent_team.memory import get_memory
+from agent_team.skills import get_skill_registry
 from agent_team.supervisor import build_agent_team
+from agent_team.tracing import get_trace_store
 from config import DEFAULT_SESSION_ID
 from models.embedding import get_embedding_model
 from models.llm import get_llm
@@ -161,6 +163,13 @@ def render_sidebar() -> None:
             st.caption(f"{item['server']}.{item['name']} - {item['description']}")
 
         st.divider()
+        st.subheader("Skills")
+        for item in get_skill_registry().list_skills():
+            tools = ", ".join(item["suggested_tools"]) or "none"
+            st.caption(f"{item['name']} -> {item['route']} · tools: {tools}")
+            st.caption(item["worker_detail"])
+
+        st.divider()
         if st.button("清空本页对话", use_container_width=True):
             st.session_state.history = []
             st.session_state.last_state = None
@@ -250,6 +259,14 @@ def render_trace(state: dict[str, Any] | None) -> None:
                 st.image(image_path)
             elif image_url:
                 st.markdown(f"[打开生成图片]({image_url})")
+
+    st.subheader("最近 Trace")
+    for row in reversed(get_trace_store().recent(limit=5)):
+        label = f"{row.get('timestamp', '')} · {row.get('route', '-')}"
+        with st.expander(label):
+            st.write(row.get("task", ""))
+            st.caption(f"skill={row.get('route_reason', '-')} · tools={', '.join(row.get('used_tools', []))}")
+            st.write(row.get("final_answer", "")[:800])
 
 
 def render_chat() -> None:
