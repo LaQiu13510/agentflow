@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
+from agent_team.long_term_memory import get_long_term_memory
 from agent_team.memory import get_memory
 from agent_team.skills import get_skill_registry
 from agent_team.supervisor import build_agent_team
@@ -54,9 +55,31 @@ def get_graph_cached():
 
 def memory_stats() -> dict[str, Any]:
     try:
-        return get_memory().stats()
+        short_term = get_memory().stats()
     except Exception as exc:
-        return {"backend": "unavailable", "total_messages": 0, "error": str(exc)[:180]}
+        short_term = {
+            "backend": "unavailable",
+            "total_messages": 0,
+            "sessions": 0,
+            "error": str(exc)[:180],
+        }
+    try:
+        long_term = get_long_term_memory().stats()
+    except Exception as exc:
+        long_term = {
+            "backend": "unavailable",
+            "total_memories": 0,
+            "sessions": 0,
+            "error": str(exc)[:180],
+        }
+    return {
+        "backend": f"短期:{short_term.get('backend', '-')} 长期:{long_term.get('backend', '-')}",
+        "total_messages": short_term.get("total_messages", 0),
+        "long_term_memories": long_term.get("total_memories", 0),
+        "sessions": max(short_term.get("sessions", 0), long_term.get("sessions", 0)),
+        "short_term": short_term,
+        "long_term": long_term,
+    }
 
 
 def service_checks() -> list[dict[str, Any]]:
@@ -101,6 +124,11 @@ def meta() -> dict[str, Any]:
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     return {"checks": service_checks(), "memory": memory_stats()}
+
+
+@app.get("/api/memory")
+def memory() -> dict[str, Any]:
+    return {"memory": memory_stats()}
 
 
 @app.get("/api/traces")
@@ -653,8 +681,9 @@ INDEX_HTML = r"""
 
     function updateMemoryMetric(memory) {
       const total = memory.total_messages ?? 0;
+      const longTerm = memory.long_term_memories ?? 0;
       const backend = memory.backend || "-";
-      setMetric("metric-memory", `${total} / ${backend}`);
+      setMetric("metric-memory", `短 ${total} · 长 ${longTerm} / ${backend}`);
     }
 
     function renderTraces(traces) {

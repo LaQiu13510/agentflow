@@ -1,31 +1,40 @@
-# AgentFlow
+# AgentFlow 多 Agent 协作平台
 
-AgentFlow is a local multi-agent orchestration platform for LLM applications. It uses LangGraph to route tasks through a Supervisor, delegates work to specialized workers, exposes PostgreSQL, Milvus, project utilities, and image generation through MCP-style tools, and provides a FastAPI web interface.
+AgentFlow 是一个本地 Multi-Agent 协作平台，用于构建可观察、可扩展的 LLM 应用。项目基于 LangGraph 实现 Supervisor 路由，将任务分配给不同 Worker，并通过 MCP 风格工具层连接 PostgreSQL、Milvus、项目工具和图片生成能力，同时提供 FastAPI Web 界面。
 
-## Features
+## 项目背景
 
-- Route tasks with a LangGraph Supervisor workflow.
-- Use four worker roles:
-  - `researcher`: retrieves knowledge, summarizes evidence, and cites sources.
-  - `engineer`: plans architecture, interfaces, implementation steps, tests, and risks.
-  - `writer`: produces documentation, reports, summaries, and release-style text.
-  - `general`: handles lightweight coordination and image generation tasks.
-- Register reusable skills with triggers, input schemas, output formats, fallback routes, and suggested tools.
-- Manage worker context with memory trimming and tool-observation formatting.
-- Expose local MCP-style tools with `list_tools` and `call_tool`.
-- Store short-term memory in PostgreSQL, with an in-memory fallback for offline demos and tests.
-- Query the SmartKB Milvus collection from the companion RAG project.
-- Generate images through a Right Code-compatible `gpt-image-2` image API.
-- Persist execution traces with routes, skills, tool calls, observations, final answers, latency, and estimated usage.
-- Redact common secrets from prompts and traces, and limit per-worker tool calls.
-- Serve a FastAPI dashboard with chat, metrics, skills, tools, traces, and health checks.
-- Stream Agent responses to the browser with Server-Sent Events (SSE).
+企业中的 AI 助手往往不只需要回答单个问题，还需要完成多步骤任务，例如检索资料、分析需求、设计方案、生成文档、调用数据库或外部工具。单一 Agent 在处理这类复杂任务时，容易出现职责不清、工具调用不可控、过程不可追踪等问题。
 
-## Architecture
+AgentFlow 面向这个问题构建一个可观察、可扩展的 Multi-Agent 协作平台：Supervisor 负责理解任务并选择合适的 Skill 和 Worker，不同 Worker 通过 MCP 风格工具层连接知识库、数据库、项目工具和图片生成能力，让复杂任务的执行过程可分工、可观察、可复盘。
+
+## 功能特性
+
+- 使用 LangGraph 构建 Supervisor 工作流。
+- 支持四类 Worker：
+  - `researcher`：检索知识、总结证据、指出来源。
+  - `engineer`：设计架构、接口、实现步骤、测试方案和风险控制。
+  - `writer`：生成 README、技术报告、摘要和发布说明。
+  - `general`：处理通用任务和图片生成任务。
+- 使用 SkillRegistry 管理技能触发词、输入 schema、输出格式、fallback route 和建议工具。
+- 使用 ContextManager 管理历史记忆和工具观察，避免 prompt 无限膨胀。
+- 提供 MCP 风格工具协议：`list_tools` 和 `call_tool`。
+- 支持 PostgreSQL 短期记忆，数据库不可用时自动降级到内存记忆。
+- 支持长期记忆，将任务经验沉淀为可检索摘要，并在后续任务中注入相关上下文。
+- 支持调用 SmartKB 的 Milvus 知识库。
+- 支持 Right Code 兼容的 `gpt-image-2` 图片生成。
+- 支持执行轨迹持久化，记录路由、技能、工具调用、观察结果、最终回答、延迟和估算用量。
+- 支持敏感信息脱敏和 Worker 工具调用次数限制。
+- 提供 FastAPI Web 界面，展示聊天、指标、技能、工具、Trace 和服务状态。
+- 支持 SSE（Server-Sent Events）流式输出。
+
+## 系统架构
 
 ```text
 User task
   -> memory loader
+       -> short-term dialogue memory
+       -> long-term task memory retrieval
   -> Supervisor + SkillRegistry
   -> researcher | engineer | writer | general
   -> ContextManager
@@ -38,7 +47,7 @@ User task
   -> memory + trace storage
 ```
 
-## Project Structure
+## 目录结构
 
 ```text
 agentflow-multi-agent/
@@ -48,6 +57,7 @@ agentflow-multi-agent/
 ├── test_e2e.py
 ├── agent_team/
 │   ├── context.py
+│   ├── long_term_memory.py
 │   ├── memory.py
 │   ├── safety.py
 │   ├── skills.py
@@ -60,7 +70,7 @@ agentflow-multi-agent/
 └── tools/
 ```
 
-## Installation
+## 安装
 
 ```bash
 git clone <your-repository-url>
@@ -70,15 +80,15 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## Configuration
+## 配置
 
-Copy the example environment file and fill in your own credentials.
+复制环境变量模板，并填写自己的模型、数据库、向量库和图片生成配置。
 
 ```bash
 cp .env.example .env
 ```
 
-Common configuration values:
+常用配置示例：
 
 ```env
 SMARTKB_PROJECT_DIR=../smartkb-rag
@@ -89,24 +99,31 @@ DB_URL=your_postgresql_connection_string
 MILVUS_HOST=127.0.0.1
 MILVUS_PORT=19530
 COLLECTION_NAME=my_rag_collection
+AGENTFLOW_MEMORY_TABLE=agentflow_memories
+AGENTFLOW_LONG_TERM_MEMORY_TABLE=agentflow_long_term_memories
+AGENTFLOW_LONG_TERM_MEMORY_LIMIT=4
 IMAGE_API_KEY=your_image_api_key
 IMAGE_API_BASE=https://www.right.codes/draw/v1
 IMAGE_MODEL=gpt-image-2
 ```
 
-Do not commit real credentials.
+请不要提交真实密钥。
 
-## Usage
+## 运行
 
-Run the FastAPI app:
+启动 FastAPI 应用：
 
 ```bash
 uvicorn app:app --host 127.0.0.1 --port 8502
 ```
 
-Open `http://127.0.0.1:8502` and enter a task. The UI shows route decisions, skill selection, tool calls, observations, latency, memory status, and recent traces.
+打开浏览器访问：
 
-Example tasks:
+```text
+http://127.0.0.1:8502
+```
+
+示例任务：
 
 ```text
 检索 SmartKB 中关于混合检索和 RRF 的内容
@@ -115,9 +132,9 @@ Example tasks:
 生成一个多 Agent 协作架构图
 ```
 
-## Tests
+## 测试
 
-The default tests are offline and do not require external services.
+默认测试为离线测试，不依赖外部服务。
 
 ```bash
 python test_imports.py
@@ -125,14 +142,14 @@ python test_e2e.py
 python eval/agent_eval.py
 ```
 
-Live service checks can be run after `.env` is configured:
+配置 `.env` 后可以运行 live 检查：
 
 ```bash
 python test_imports.py --live
 python test_e2e.py --live
 ```
 
-## Documentation
+## 文档
 
 - `docs/ARCHITECTURE.md`
 - `docs/EVALUATION.md`

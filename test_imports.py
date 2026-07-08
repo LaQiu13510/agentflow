@@ -38,6 +38,7 @@ def check_config():
 
 def check_core_imports():
     import agent_team.context  # noqa: F401
+    import agent_team.long_term_memory  # noqa: F401
     import models.embedding  # noqa: F401
     import models.llm  # noqa: F401
     warnings.filterwarnings("ignore")
@@ -78,6 +79,7 @@ def check_keyword_router():
 
 
 def check_memory_fallback():
+    from agent_team.long_term_memory import InMemoryLongTermMemory
     from agent_team.memory import InMemoryAgentMemory
 
     memory = InMemoryAgentMemory("test")
@@ -87,7 +89,19 @@ def check_memory_fallback():
     stats = memory.stats()
     assert "AgentFlow" in context
     assert stats["total_messages"] == 2
-    return f"backend={stats['backend']}"
+
+    long_term = InMemoryLongTermMemory("test")
+    long_term.add_memory(
+        "s1",
+        "设计 AgentFlow 长期记忆模块",
+        "长期记忆用于沉淀任务经验，并在后续任务中按相关性检索。",
+        route="engineer",
+    )
+    long_context = long_term.format_context("长期记忆怎么设计", "s1")
+    long_stats = long_term.stats()
+    assert "长期记忆" in long_context
+    assert long_stats["total_memories"] == 1
+    return f"short={stats['backend']} long={long_stats['backend']}"
 
 
 def check_context_and_skills():

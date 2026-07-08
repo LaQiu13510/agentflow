@@ -11,6 +11,7 @@ import warnings
 
 from langchain_core.messages import HumanMessage
 
+from agent_team.long_term_memory import InMemoryLongTermMemory
 from agent_team.memory import InMemoryAgentMemory
 from tools.mcp_base import LocalMCPServer, ToolRegistry, ToolResult, ToolSpec
 
@@ -113,7 +114,10 @@ def build_fake_registry() -> ToolRegistry:
     )
 
 
-def patch_runtime(memory: InMemoryAgentMemory):
+def patch_runtime(
+    memory: InMemoryAgentMemory,
+    long_term_memory: InMemoryLongTermMemory,
+):
     import agent_team.supervisor as supervisor_module
     import agent_team.workers.base as worker_base
 
@@ -121,6 +125,7 @@ def patch_runtime(memory: InMemoryAgentMemory):
     supervisor_module.get_llm = lambda *args, **kwargs: fake_llm
     worker_base.get_llm = lambda *args, **kwargs: fake_llm
     supervisor_module.get_memory = lambda: memory
+    supervisor_module.get_long_term_memory = lambda: long_term_memory
 
 
 def run_case(graph, task: str, expected_route: str):
@@ -145,7 +150,8 @@ def run_offline_e2e():
     from agent_team.supervisor import build_agent_team
 
     memory = InMemoryAgentMemory("offline-e2e")
-    patch_runtime(memory)
+    long_term_memory = InMemoryLongTermMemory("offline-e2e")
+    patch_runtime(memory, long_term_memory)
     graph = build_agent_team(build_fake_registry())
 
     cases = [
@@ -161,6 +167,15 @@ def run_offline_e2e():
     stats = memory.stats()
     assert stats["total_messages"] == len(cases) * 2
     print(f"[OK] memory backend={stats['backend']} messages={stats['total_messages']}")
+
+    long_stats = long_term_memory.stats()
+    assert long_stats["total_memories"] == len(cases)
+    long_context = long_term_memory.format_context("MCP server 测试方案", "offline-e2e")
+    assert "MCP" in long_context
+    print(
+        f"[OK] long-term memory backend={long_stats['backend']} "
+        f"memories={long_stats['total_memories']}"
+    )
     print(f"[OK] last answer preview={last_state['final_answer'][:80]}")
 
 

@@ -9,6 +9,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
+from agent_team.long_term_memory import get_long_term_memory
 from agent_team.memory import get_memory
 from agent_team.skills import Skill, get_skill_registry
 from agent_team.tracing import get_trace_store
@@ -28,6 +29,8 @@ class AgentFlowState(TypedDict, total=False):
     task: str
     route: str
     route_reason: str
+    short_term_context: str
+    long_term_context: str
     memory_context: str
     worker_output: str
     final_answer: str
@@ -110,6 +113,7 @@ def build_agent_team(
     registry = tools or build_tool_registry()
     supervisor = SupervisorAgent()
     memory = get_memory()
+    long_term_memory = get_long_term_memory()
     workers = {
         "researcher": ResearcherWorker(registry),
         "engineer": EngineerWorker(registry),
@@ -121,7 +125,17 @@ def build_agent_team(
         session_id = state.get("session_id") or DEFAULT_SESSION_ID
         state["session_id"] = session_id
         state["task"] = _latest_user_message(state)
-        state["memory_context"] = memory.recent_context(session_id)
+        short_term_context = memory.recent_context(session_id)
+        long_term_context = long_term_memory.format_context(
+            state.get("task", ""),
+            session_id=session_id,
+        )
+        state["short_term_context"] = short_term_context
+        state["long_term_context"] = long_term_context
+        state["memory_context"] = (
+            f"短期记忆:\n{short_term_context}\n\n"
+            f"长期记忆:\n{long_term_context}"
+        )
         state["_start_time"] = time.time()
         return state
 
@@ -168,6 +182,13 @@ def build_agent_team(
             memory.add_message(session_id, "user", task, route=route)
         if answer:
             memory.add_message(session_id, "assistant", answer, route=route)
+            long_term_memory.add_memory(
+                session_id=session_id,
+                task=task,
+                answer=answer,
+                route=route,
+                skill_name=state.get("skill_name", ""),
+            )
         state["trace_record"] = get_trace_store().append(state)
         return state
 

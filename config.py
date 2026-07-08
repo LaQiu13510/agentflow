@@ -45,8 +45,13 @@ AGENTFLOW_MEMORY_TABLE = os.getenv(
     "AGENTFLOW_MEMORY_TABLE",
     "agentflow_memories",
 )
+AGENTFLOW_LONG_TERM_MEMORY_TABLE = os.getenv(
+    "AGENTFLOW_LONG_TERM_MEMORY_TABLE",
+    "agentflow_long_term_memories",
+)
 DEFAULT_SESSION_ID = "agentflow-demo"
 TOP_K_KNOWLEDGE = int(os.getenv("AGENTFLOW_TOP_K", "4"))
+LONG_TERM_MEMORY_LIMIT = int(os.getenv("AGENTFLOW_LONG_TERM_MEMORY_LIMIT", "4"))
 MAX_TOOL_CALLS_PER_WORKER = int(os.getenv("MAX_TOOL_CALLS_PER_WORKER", "4"))
 TRACE_LOG_PATH = DATA_DIR / os.getenv("AGENTFLOW_TRACE_FILE", "agentflow_traces.jsonl")
 
