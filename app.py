@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from typing import Any
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
@@ -128,6 +130,36 @@ def run_agent(request: RunRequest) -> dict[str, Any]:
         "memory": memory_stats(),
         "trace": state.get("trace_record", {}),
     }
+
+
+@app.get("/api/run/stream")
+def run_agent_stream(task: str, session_id: str = DEFAULT_SESSION_ID) -> StreamingResponse:
+    def generate():
+        yield sse("stage", {"message": "Supervisor 正在分析任务"})
+        try:
+            result = run_agent(RunRequest(task=task, session_id=session_id))
+            yield sse("stage", {"message": f"已路由到 {result.get('route', '-')}"})
+            answer = result.get("final_answer", "")
+            for chunk in chunk_text(answer):
+                yield sse("delta", {"text": chunk})
+            yield sse("final", result)
+        except Exception as exc:
+            yield sse("app_error", {"message": str(exc)[:500]})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def sse(event: str, data: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def chunk_text(text: str, size: int = 28):
+    for index in range(0, len(text), size):
+        yield text[index:index + size]
 
 
 INDEX_HTML = r"""
@@ -536,6 +568,7 @@ INDEX_HTML = r"""
       div.className = `msg ${role}`;
       div.textContent = content;
       chat.prepend(div);
+      return div;
     }
 
     async function loadMeta() {
@@ -655,26 +688,49 @@ INDEX_HTML = r"""
       runState.className = "run-state busy";
       runState.textContent = "Running · Supervisor 正在路由并调用工具";
       addMessage("user", task);
-      try {
-        const response = await fetch("/api/run", {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({task, session_id: sessionInput.value || "agentflow-demo"})
-        });
-        const result = await response.json();
-        addMessage("assistant", result.final_answer || "");
+      const assistant = addMessage("assistant", "");
+      const params = new URLSearchParams({
+        task,
+        session_id: sessionInput.value || "agentflow-demo"
+      });
+      const events = new EventSource(`/api/run/stream?${params.toString()}`);
+      let streamDone = false;
+      events.addEventListener("stage", event => {
+        const data = JSON.parse(event.data);
+        runState.textContent = `Running · ${data.message || "处理中"}`;
+      });
+      events.addEventListener("delta", event => {
+        const data = JSON.parse(event.data);
+        assistant.textContent += data.text || "";
+      });
+      events.addEventListener("final", async event => {
+        streamDone = true;
+        const result = JSON.parse(event.data);
         renderTrace(result);
         runState.className = "run-state done";
         runState.textContent = `Done · ${result.route || "-"} · ${result.latency_ms || 0} ms`;
         const traces = await fetch("/api/traces").then(r => r.json());
         renderTraces(traces.traces || []);
-      } catch (error) {
-        addMessage("assistant", `运行失败: ${error}`);
-        runState.className = "run-state";
-        runState.textContent = `Failed · ${error}`;
-      } finally {
+        events.close();
         document.body.classList.remove("loading");
-      }
+      });
+      events.addEventListener("app_error", event => {
+        let message = "流式连接失败";
+        try { message = JSON.parse(event.data).message || message; } catch {}
+        assistant.textContent = `运行失败: ${message}`;
+        runState.className = "run-state";
+        runState.textContent = `Failed · ${message}`;
+        events.close();
+        document.body.classList.remove("loading");
+      });
+      events.onerror = () => {
+        if (streamDone) return;
+        assistant.textContent = "运行失败: 流式连接失败";
+        runState.className = "run-state";
+        runState.textContent = "Failed · 流式连接失败";
+        events.close();
+        document.body.classList.remove("loading");
+      };
     }
 
     runBtn.addEventListener("click", runAgent);

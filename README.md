@@ -19,6 +19,7 @@ AgentFlow is a local multi-agent orchestration platform for LLM applications. It
 - Persist execution traces with routes, skills, tool calls, observations, final answers, latency, and estimated usage.
 - Redact common secrets from prompts and traces, and limit per-worker tool calls.
 - Serve a FastAPI dashboard with chat, metrics, skills, tools, traces, and health checks.
+- Stream Agent responses to the browser with Server-Sent Events (SSE).
 
 ## Architecture
 
