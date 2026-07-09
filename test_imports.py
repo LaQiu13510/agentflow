@@ -33,6 +33,7 @@ def check_config():
     assert config.DATA_DIR.exists()
     assert config.DOCS_DIR.exists()
     assert config.DEFAULT_SESSION_ID
+    assert config.AGENTFLOW_SESSION_TTL_SECONDS > 0
     return f"root={config.ROOT_DIR}"
 
 
@@ -43,6 +44,7 @@ def check_core_imports():
     import models.llm  # noqa: F401
     warnings.filterwarnings("ignore")
     import agent_team.memory  # noqa: F401
+    import agent_team.runtime_state  # noqa: F401
     import agent_team.skills  # noqa: F401
     import agent_team.supervisor  # noqa: F401
     import tools.mcp_base  # noqa: F401
@@ -127,6 +129,32 @@ def check_context_and_skills():
     return f"skills={len(registry.list_skills())}"
 
 
+def check_runtime_state():
+    from agent_team.runtime_state import RuntimeStateStore, runtime_context, current_runtime_context
+
+    store = RuntimeStateStore("test")
+    session = store.touch_session("s1", {"status": "active"})
+    assert session["status"] == "active"
+
+    task = store.create_task("s1", "设计一个任务队列")
+    assert task["status"] == "queued"
+    updated = store.update_task(task["task_id"], "running", route="engineer")
+    assert updated["status"] == "running"
+    assert store.recent_tasks(limit=1)[0]["task_id"] == task["task_id"]
+
+    rate = store.check_rate_limit("s1")
+    assert rate["allowed"]
+    budget = store.add_budget_units("s1", 12, category="prompt")
+    assert budget["allowed"]
+    tools = store.record_tool_call("s1", task["task_id"], "engineer", "project.summary")
+    assert tools["total"] == 1
+    assert store.get_task(task["task_id"])["tool_calls"] == 1
+
+    with runtime_context("s1", task["task_id"]):
+        assert current_runtime_context() == ("s1", task["task_id"])
+    return f"runtime={store.stats()['backend']}"
+
+
 def live_checks():
     from models.embedding import get_embedding_model
     from models.llm import get_llm
@@ -151,6 +179,7 @@ def main():
     step("Supervisor 关键词路由", check_keyword_router)
     step("内存降级记忆", check_memory_fallback)
     step("上下文与 Skills", check_context_and_skills)
+    step("运行时状态缓存", check_runtime_state)
 
     if "--live" in sys.argv:
         step("外部服务连通", live_checks)

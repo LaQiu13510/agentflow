@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent_team.context import ContextPacket, get_context_manager
+from agent_team.runtime_state import current_runtime_context, get_runtime_state
 from agent_team.safety import get_safety_controller
 from config import MAX_TOOL_CALLS_PER_WORKER
 from models.llm import get_llm
@@ -67,6 +68,16 @@ class BaseWorker:
                 f"工具调用超过上限: {MAX_TOOL_CALLS_PER_WORKER}",
                 {"max_tool_calls": MAX_TOOL_CALLS_PER_WORKER},
             )
+        try:
+            session_id, task_id = current_runtime_context()
+            get_runtime_state().record_tool_call(
+                session_id=session_id,
+                task_id=task_id,
+                worker=self.name,
+                tool_name=f"{server_name}.{tool_name}",
+            )
+        except Exception:
+            pass
         result = self.tools.call(server_name, tool_name, **kwargs)
         result.content = self.safety.redact(result.content)
         return result

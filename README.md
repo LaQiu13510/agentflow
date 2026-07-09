@@ -21,6 +21,7 @@ AgentFlow 面向这个问题构建一个可观察、可扩展的 Multi-Agent 协
 - 提供 MCP 风格工具协议：`list_tools` 和 `call_tool`。
 - 支持 PostgreSQL 短期记忆，数据库不可用时自动降级到内存记忆。
 - 支持长期记忆，将任务经验沉淀为可检索摘要，并在后续任务中注入相关上下文。
+- 支持运行时状态缓存，可用 Redis 保存 24 小时短期会话、任务状态、限流、工具调用计数和预算用量。
 - 支持调用 SmartKB 的 Milvus 知识库。
 - 支持 Right Code 兼容的 `gpt-image-2` 图片生成。
 - 支持执行轨迹持久化，记录路由、技能、工具调用、观察结果、最终回答、延迟和估算用量。
@@ -32,6 +33,11 @@ AgentFlow 面向这个问题构建一个可观察、可扩展的 Multi-Agent 协
 
 ```text
 User task
+  -> runtime guard
+       -> session state
+       -> rate limit
+       -> budget cache
+       -> task status
   -> memory loader
        -> short-term dialogue memory
        -> long-term task memory retrieval
@@ -59,6 +65,7 @@ agentflow-multi-agent/
 │   ├── context.py
 │   ├── long_term_memory.py
 │   ├── memory.py
+│   ├── runtime_state.py
 │   ├── safety.py
 │   ├── skills.py
 │   ├── supervisor.py
@@ -102,12 +109,16 @@ COLLECTION_NAME=my_rag_collection
 AGENTFLOW_MEMORY_TABLE=agentflow_memories
 AGENTFLOW_LONG_TERM_MEMORY_TABLE=agentflow_long_term_memories
 AGENTFLOW_LONG_TERM_MEMORY_LIMIT=4
+REDIS_URL=redis://127.0.0.1:6379/0
+AGENTFLOW_RUNTIME_BACKEND=auto
+AGENTFLOW_SESSION_TTL_SECONDS=86400
+AGENTFLOW_RATE_LIMIT_PER_MINUTE=20
+AGENTFLOW_DAILY_BUDGET_UNITS=50000
 IMAGE_API_KEY=your_image_api_key
 IMAGE_API_BASE=https://www.right.codes/draw/v1
 IMAGE_MODEL=gpt-image-2
 ```
 
-请不要提交真实密钥。
 
 ## 运行
 

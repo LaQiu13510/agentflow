@@ -11,6 +11,7 @@ from langgraph.graph.message import add_messages
 
 from agent_team.long_term_memory import get_long_term_memory
 from agent_team.memory import get_memory
+from agent_team.runtime_state import runtime_context
 from agent_team.skills import Skill, get_skill_registry
 from agent_team.tracing import get_trace_store
 from agent_team.workers.engineer import EngineerWorker
@@ -26,6 +27,7 @@ from tools.registry import build_tool_registry
 class AgentFlowState(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], add_messages]
     session_id: str
+    task_id: str
     task: str
     route: str
     route_reason: str
@@ -149,10 +151,14 @@ def build_agent_team(
 
     def worker_node(worker_name: str):
         def _run(state: AgentFlowState) -> AgentFlowState:
-            result = workers[worker_name].run(
-                task=state.get("task", ""),
-                memory_context=state.get("memory_context", ""),
-            )
+            with runtime_context(
+                state.get("session_id", DEFAULT_SESSION_ID),
+                state.get("task_id", ""),
+            ):
+                result = workers[worker_name].run(
+                    task=state.get("task", ""),
+                    memory_context=state.get("memory_context", ""),
+                )
             state["worker_output"] = result.content
             state["observations"] = result.observations
             state["used_tools"] = result.used_tools

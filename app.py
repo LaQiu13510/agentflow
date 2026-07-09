@@ -14,6 +14,8 @@ from pydantic import BaseModel, Field
 
 from agent_team.long_term_memory import get_long_term_memory
 from agent_team.memory import get_memory
+from agent_team.runtime_state import get_runtime_state
+from agent_team.safety import get_safety_controller
 from agent_team.skills import get_skill_registry
 from agent_team.supervisor import build_agent_team
 from agent_team.tracing import get_trace_store
@@ -82,6 +84,13 @@ def memory_stats() -> dict[str, Any]:
     }
 
 
+def runtime_stats() -> dict[str, Any]:
+    try:
+        return get_runtime_state().stats()
+    except Exception as exc:
+        return {"backend": "unavailable", "error": str(exc)[:180]}
+
+
 def service_checks() -> list[dict[str, Any]]:
     checks = []
     checks.append(_safe_check("DeepSeek", lambda: get_llm(max_tokens=64).test_connection()))
@@ -89,6 +98,7 @@ def service_checks() -> list[dict[str, Any]]:
     checks.append(_safe_tool_check("PostgreSQL", "postgres", "health"))
     checks.append(_safe_tool_check("Milvus", "milvus", "health"))
     checks.append(_safe_tool_check("Image", "image", "health"))
+    checks.append(_safe_check("Runtime", lambda: (True, runtime_stats())))
     return checks
 
 
@@ -117,18 +127,31 @@ def meta() -> dict[str, Any]:
         "tools": get_registry_cached().list_tools(),
         "skills": get_skill_registry().list_skills(),
         "memory": memory_stats(),
+        "runtime": runtime_stats(),
         "traces": get_trace_store().recent(limit=8),
     }
 
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"checks": service_checks(), "memory": memory_stats()}
+    return {"checks": service_checks(), "memory": memory_stats(), "runtime": runtime_stats()}
 
 
 @app.get("/api/memory")
 def memory() -> dict[str, Any]:
     return {"memory": memory_stats()}
+
+
+@app.get("/api/runtime")
+def runtime() -> dict[str, Any]:
+    store = get_runtime_state()
+    return {"runtime": runtime_stats(), "tasks": store.recent_tasks(limit=12)}
+
+
+@app.get("/api/tasks/{task_id}")
+def task_status(task_id: str) -> dict[str, Any]:
+    task = get_runtime_state().get_task(task_id)
+    return {"ok": bool(task), "task": task or {}}
 
 
 @app.get("/api/traces")
@@ -138,25 +161,120 @@ def traces(limit: int = 8) -> dict[str, Any]:
 
 @app.post("/api/run")
 def run_agent(request: RunRequest) -> dict[str, Any]:
-    graph = get_graph_cached()
-    state = graph.invoke(
-        {
-            "messages": [HumanMessage(content=request.task)],
-            "session_id": request.session_id or DEFAULT_SESSION_ID,
-        }
+    session_id = request.session_id or DEFAULT_SESSION_ID
+    runtime_store = get_runtime_state()
+    safety = get_safety_controller()
+    runtime_store.touch_session(
+        session_id,
+        {"status": "checking", "last_task": request.task[:300]},
     )
+
+    rate_limit = runtime_store.check_rate_limit(session_id)
+    if not rate_limit.get("allowed", True):
+        runtime_store.touch_session(session_id, {"status": "rate_limited"})
+        return blocked_run_response(
+            request,
+            session_id,
+            "请求过快，请稍后再试。",
+            {"rate_limit": rate_limit, "state": runtime_stats()},
+        )
+
+    prompt_budget = runtime_store.add_budget_units(
+        session_id,
+        safety.estimate_units(request.task),
+        category="prompt",
+    )
+    if not prompt_budget.get("allowed", True):
+        runtime_store.touch_session(session_id, {"status": "budget_blocked"})
+        return blocked_run_response(
+            request,
+            session_id,
+            "今日预算已达到上限，请明天再试或调高预算配置。",
+            {"rate_limit": rate_limit, "budget": prompt_budget, "state": runtime_stats()},
+        )
+
+    task_record = runtime_store.create_task(session_id, request.task)
+    task_id = task_record["task_id"]
+    runtime_store.update_task(task_id, "running")
+
+    graph = get_graph_cached()
+    try:
+        state = graph.invoke(
+            {
+                "messages": [HumanMessage(content=request.task)],
+                "session_id": session_id,
+                "task_id": task_id,
+            }
+        )
+    except Exception as exc:
+        runtime_store.update_task(task_id, "failed", error=str(exc)[:300])
+        runtime_store.touch_session(session_id, {"status": "failed", "last_task_id": task_id})
+        raise
+
+    final_answer = state.get("final_answer") or state.get("worker_output", "")
+    answer_budget = runtime_store.add_budget_units(
+        session_id,
+        safety.estimate_units(final_answer),
+        category="answer",
+    )
+    task_record = runtime_store.update_task(
+        task_id,
+        "done",
+        route=state.get("route", "-"),
+        route_reason=state.get("route_reason", "-"),
+        latency_ms=state.get("latency_ms", 0),
+        used_tools=state.get("used_tools", []),
+        budget=answer_budget,
+    )
+    runtime_store.touch_session(
+        session_id,
+        {"status": "idle", "last_task_id": task_id, "last_route": state.get("route", "-")},
+    )
+
     return {
+        "ok": True,
         "session_id": state.get("session_id", request.session_id),
+        "task_id": task_id,
         "task": state.get("task", request.task),
         "route": state.get("route", "-"),
         "route_reason": state.get("route_reason", "-"),
         "skill_name": state.get("skill_name", ""),
         "used_tools": state.get("used_tools", []),
         "observations": state.get("observations", []),
-        "final_answer": state.get("final_answer") or state.get("worker_output", ""),
+        "final_answer": final_answer,
         "latency_ms": state.get("latency_ms", 0),
         "memory": memory_stats(),
         "trace": state.get("trace_record", {}),
+        "runtime": {
+            "task": task_record,
+            "rate_limit": rate_limit,
+            "budget": answer_budget,
+            "tool_stats": runtime_store.get_tool_stats(session_id),
+            "state": runtime_stats(),
+        },
+    }
+
+
+def blocked_run_response(
+    request: RunRequest,
+    session_id: str,
+    message: str,
+    runtime: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "session_id": session_id,
+        "task": request.task,
+        "route": "-",
+        "route_reason": "runtime_guard",
+        "skill_name": "",
+        "used_tools": [],
+        "observations": [],
+        "final_answer": message,
+        "latency_ms": 0,
+        "memory": memory_stats(),
+        "trace": {},
+        "runtime": runtime,
     }
 
 
@@ -644,6 +762,10 @@ INDEX_HTML = r"""
       setMetric("metric-latency", `${result.latency_ms || 0} ms`);
       setMetric("metric-tools", (result.used_tools || []).length);
       updateMemoryMetric(result.memory || {});
+      const budget = (result.runtime || {}).budget || {};
+      const budgetText = budget.limit
+        ? `${budget.used ?? 0}/${budget.limit}`
+        : `${budget.used ?? 0}`;
 
       const tools = (result.used_tools || []).map(tool =>
         `<span class="chip">${escapeHtml(tool)}</span>`
@@ -672,8 +794,10 @@ INDEX_HTML = r"""
           <div class="stage done"><span class="dot"></span><span>Tool calls · ${(result.used_tools || []).length}</span></div>
           <div class="stage done"><span class="dot"></span><span>Trace persisted</span></div>
         </div>
+        <div class="kv"><div class="k">Task ID</div><div class="v">${escapeHtml(result.task_id || "-")}</div></div>
         <div class="kv"><div class="k">路由</div><div class="v">${escapeHtml(result.route || "-")}</div></div>
         <div class="kv"><div class="k">Skill</div><div class="v">${escapeHtml(result.route_reason || "-")}</div></div>
+        <div class="kv"><div class="k">预算</div><div class="v">${escapeHtml(budgetText)}</div></div>
         <div class="kv"><div class="k">工具</div><div class="v"><div class="chips">${tools || "<span class='muted'>无</span>"}</div></div></div>
         ${observations}
       `;
@@ -736,8 +860,10 @@ INDEX_HTML = r"""
         streamDone = true;
         const result = JSON.parse(event.data);
         renderTrace(result);
-        runState.className = "run-state done";
-        runState.textContent = `Done · ${result.route || "-"} · ${result.latency_ms || 0} ms`;
+        runState.className = result.ok === false ? "run-state" : "run-state done";
+        runState.textContent = result.ok === false
+          ? `Blocked · ${result.route_reason || "runtime_guard"}`
+          : `Done · ${result.route || "-"} · ${result.latency_ms || 0} ms`;
         const traces = await fetch("/api/traces").then(r => r.json());
         renderTraces(traces.traces || []);
         events.close();

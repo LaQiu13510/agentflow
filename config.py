@@ -55,6 +55,13 @@ LONG_TERM_MEMORY_LIMIT = int(os.getenv("AGENTFLOW_LONG_TERM_MEMORY_LIMIT", "4"))
 MAX_TOOL_CALLS_PER_WORKER = int(os.getenv("MAX_TOOL_CALLS_PER_WORKER", "4"))
 TRACE_LOG_PATH = DATA_DIR / os.getenv("AGENTFLOW_TRACE_FILE", "agentflow_traces.jsonl")
 
+# Runtime state cache
+REDIS_URL = os.getenv("REDIS_URL", "")
+AGENTFLOW_RUNTIME_BACKEND = os.getenv("AGENTFLOW_RUNTIME_BACKEND", "auto").lower()
+AGENTFLOW_SESSION_TTL_SECONDS = int(os.getenv("AGENTFLOW_SESSION_TTL_SECONDS", "86400"))
+AGENTFLOW_RATE_LIMIT_PER_MINUTE = int(os.getenv("AGENTFLOW_RATE_LIMIT_PER_MINUTE", "20"))
+AGENTFLOW_DAILY_BUDGET_UNITS = int(os.getenv("AGENTFLOW_DAILY_BUDGET_UNITS", "50000"))
+
 # Image generation
 IMAGE_API_KEY = os.getenv("IMAGE_API_KEY", "")
 IMAGE_API_BASE = os.getenv("IMAGE_API_BASE", "https://www.right.codes/draw/v1")
